@@ -1,9 +1,9 @@
 """
-Shopping Agent - Low-Level LangGraph
+Policy Agent - Low-Level LangGraph
 -------------------------------------
-Same ReAct behavior as agent.py, but built by hand with StateGraph
-instead of the prebuilt create_agent. Read this alongside agent.py to see
-exactly what State / Node / Edge the prebuilt version was hiding.
+agent.py와 동일한 ReAct 동작을 하지만, prebuilt create_agent 대신
+StateGraph로 직접 구현한 버전입니다. agent.py와 함께 읽으면
+prebuilt 버전이 감추고 있던 State / Node / Edge를 정확히 볼 수 있습니다.
 """
 
 import logging
@@ -14,31 +14,31 @@ from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
-from shopping_agent.agent import get_llm
-from shopping_agent.prompts import SYSTEM_PROMPT
-from shopping_agent.tools import SHOPPING_TOOLS
+from policy_agent.agent import get_llm
+from policy_agent.prompts import SYSTEM_PROMPT
+from policy_agent.tools import PORTAL_TOOLS
 
 load_dotenv(override=True)
 
-logger = logging.getLogger("shopping_agent.lowlevel")
+logger = logging.getLogger("policy_agent.lowlevel")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     _handler = logging.StreamHandler()
     _handler.setFormatter(logging.Formatter("%(asctime)s [NODE] %(message)s"))
     logger.addHandler(_handler)
 
-TOOLS_BY_NAME = {t.name: t for t in SHOPPING_TOOLS}
+TOOLS_BY_NAME = {t.name: t for t in PORTAL_TOOLS}
 
 
-# ---- State ----------------------------------------------------------------
-# The only thing every node reads from / writes back into. `add_messages`
-# is the reducer: instead of overwriting the list, new messages are appended.
+# ---- 상태(State) ----------------------------------------------------------------
+# 모든 노드가 읽고 쓰는 유일한 대상. `add_messages`가 리듀서 역할을 하여
+# 리스트를 덮어쓰는 대신 새 메시지를 뒤에 추가한다.
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
 
 
-# ---- Nodes ------------------------------------------------------------------
-_llm = get_llm().bind_tools(SHOPPING_TOOLS)
+# ---- 노드 ------------------------------------------------------------------
+_llm = get_llm().bind_tools(PORTAL_TOOLS)
 
 
 def call_model(state: AgentState) -> dict:
@@ -63,7 +63,7 @@ def call_tools(state: AgentState) -> dict:
     return {"messages": results}
 
 
-# ---- Edges (conditional routing) -------------------------------------------
+# ---- Edges (조건부 라우팅) -------------------------------------------
 def route_after_model(state: AgentState) -> str:
     """LLM이 tool_calls를 냈으면 tools 노드로, 아니면 종료."""
     last_message = state["messages"][-1]
@@ -72,13 +72,13 @@ def route_after_model(state: AgentState) -> str:
     return END
 
 
-# ---- Graph assembly ---------------------------------------------------------
+# ---- 그래프 조립 ---------------------------------------------------------
 builder = StateGraph(AgentState)
 builder.add_node("model", call_model)
 builder.add_node("tools", call_tools)
 
 builder.add_edge(START, "model")
 builder.add_conditional_edges("model", route_after_model, {"tools": "tools", END: END})
-builder.add_edge("tools", "model")  # ReAct loop: 툴 실행 후 다시 LLM에게
+builder.add_edge("tools", "model")  # ReAct 루프: 툴 실행 후 다시 LLM에게
 
 graph = builder.compile()

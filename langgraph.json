@@ -1,8 +1,9 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "shopping_agent": "./src/shopping_agent/agent.py:graph",
-    "shopping_agent_lowlevel": "./src/shopping_agent/agent_lowlevel.py:graph"
+    "policy_agent": "./src/policy_agent/agent.py:graph",
+    "policy_agent_lowlevel": "./src/policy_agent/agent_lowlevel.py:graph",
+    "policy_agent_multiagent": "./src/policy_agent/agent_multiagent.py:graph"
   },
   "env": ".env"
 }
