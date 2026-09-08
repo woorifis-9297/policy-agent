@@ -25,8 +25,10 @@
   </form>
 
 <script>
-  // 프록시 서버 주소. 실제 페이지에 이식할 때 이 값만 바꾸면 된다.
-  const API_BASE = "http://127.0.0.1:8000";
+  // 이 데모 페이지는 프록시(FastAPI)가 /demo로 직접 서빙하므로 항상 같은 origin이다.
+  // 실제 서비스 페이지에 이식할 때는 프록시가 별도 도메인/포트라면
+  // 여기를 그 주소(예: "https://chat-api.example.com")로 바꿔야 한다.
+  const API_BASE = window.location.origin;
 
   // 같은 브라우저에서 새로고침해도 대화가 이어지도록 session_id를 localStorage에 저장.
   const SESSION_KEY = "policy_agent_session_id";
@@ -58,14 +60,21 @@
 
     const botDiv = appendMessage("bot", "...");
 
-    const res = await fetch(`${API_BASE}/chat/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, message }),
-    });
+    let res;
+    try {
+      res = await fetch(`${API_BASE}/chat/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, message }),
+      });
+    } catch (err) {
+      botDiv.textContent = `서버에 연결할 수 없습니다 (${API_BASE}). 네트워크/CORS 설정을 확인하세요.`;
+      console.error("fetch failed:", err);
+      return;
+    }
 
     if (!res.ok || !res.body) {
-      botDiv.textContent = "서버에 연결할 수 없습니다.";
+      botDiv.textContent = `서버 응답 오류 (status ${res.status})`;
       return;
     }
 
