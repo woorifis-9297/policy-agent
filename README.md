@@ -173,7 +173,9 @@ langgraph-agent-tutorial/
 │   │   ├── tools.py                   # 도구 함수 정의
 │   │   ├── data.py                    # 사내 업무/규정/조직/IT가이드 데이터베이스
 │   │   ├── prompts.py                 # 시스템 프롬프트
-│   │   └── slack_bot.py               # Slack Socket Mode 봇 (langgraph dev API 호출)
+│   │   ├── slack_bot.py               # Slack Socket Mode 봇 (langgraph dev API 호출)
+│   │   ├── web_api.py                 # 웹 챗봇용 FastAPI 프록시 (langgraph dev API 호출)
+│   │   └── static/index.html          # 웹 챗봇 임베드 데모 페이지
 │   └── utils/                         # 유틸리티 함수
 │       ├── graphs.py                  # 그래프 시각화
 │       ├── messages.py                # 스트리밍 헬퍼
@@ -230,6 +232,37 @@ uv run python -m policy_agent.slack_bot
 ```
 
 Slack 채널에서 봇을 멘션하거나 DM을 보내면 `policy_agent` 그래프가 응답합니다.
+
+### 5. 웹페이지에 챗봇으로 연동하기
+
+Slack 봇과 같은 패턴이다: `policy_agent.web_api`는 그래프를 직접 갖지 않고,
+떠 있는 `langgraph dev` API 서버에 HTTP로 요청만 중계하는 FastAPI 프록시다.
+웹페이지(프론트)는 이 프록시만 호출하면 되고, LangGraph 서버에 직접 붙을
+필요가 없다 (CORS/인증을 이 프록시에서 통제할 수 있다).
+
+```bash
+# 1) LangGraph 개발 서버 실행 (그대로 켜둔 상태 유지)
+uv run langgraph dev --no-browser
+
+# 2) 다른 터미널에서 웹 챗봇 프록시 실행
+uv run uvicorn policy_agent.web_api:app --app-dir src --port 8000
+```
+
+`.env`에 실제 서비스 페이지의 origin을 등록해야 브라우저 CORS를 통과한다:
+
+```env
+WEB_CHAT_ALLOWED_ORIGINS=https://portal.example.com
+```
+
+제공하는 엔드포인트:
+
+- `POST /chat` - 단순 요청/응답 (`{session_id, message}` -> `{answer, thread_id}`)
+- `POST /chat/stream` - SSE 스트리밍 (`event: token`으로 누적 텍스트, `event: done`/`event: error`)
+- `GET /demo` - `src/policy_agent/static/index.html`에 있는 임베드용 챗봇 위젯 데모.
+  프론트엔드 개발자는 이 파일의 `<script>` 블록을 실제 페이지에 그대로 이식하면 된다.
+
+`session_id`는 프론트가 브라우저(예: `localStorage`)에 저장해두는 대화 식별자로,
+같은 `session_id`를 계속 보내면 서버를 재시작해도 대화가 이어진다.
 
 ---
 

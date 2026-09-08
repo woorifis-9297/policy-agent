@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>사내 포탈 업무 도우미 - 챗봇 위젯 데모</title>
+<style>
+  body { font-family: -apple-system, "Malgun Gothic", sans-serif; max-width: 640px; margin: 40px auto; }
+  #log { border: 1px solid #ddd; border-radius: 8px; padding: 12px; height: 420px; overflow-y: auto; }
+  .msg { margin: 8px 0; line-height: 1.5; }
+  .msg.user { text-align: right; color: #0b57d0; }
+  .msg.bot { text-align: left; color: #222; white-space: pre-wrap; }
+  form { display: flex; gap: 8px; margin-top: 12px; }
+  input[type=text] { flex: 1; padding: 8px; }
+  button { padding: 8px 16px; }
+</style>
+</head>
+<body>
+  <h2>사내 포탈 업무 도우미 (데모)</h2>
+  <p>이 페이지는 <code>policy_agent.web_api</code> 프록시(기본 <code>http://127.0.0.1:8000</code>)를
+  호출하는 임베드용 챗봇 위젯 예시입니다. 실제 서비스 페이지에는 이 스크립트 블록만 이식하면 됩니다.</p>
+  <div id="log"></div>
+  <form id="chat-form">
+    <input type="text" id="chat-input" placeholder="질문을 입력하세요 (예: 연차 신청 방법 알려줘)" autocomplete="off" />
+    <button type="submit">전송</button>
+  </form>
+
+<script>
+  // 프록시 서버 주소. 실제 페이지에 이식할 때 이 값만 바꾸면 된다.
+  const API_BASE = "http://127.0.0.1:8000";
+
+  // 같은 브라우저에서 새로고침해도 대화가 이어지도록 session_id를 localStorage에 저장.
+  const SESSION_KEY = "policy_agent_session_id";
+  let sessionId = localStorage.getItem(SESSION_KEY);
+  if (!sessionId) {
+    sessionId = crypto.randomUUID();
+    localStorage.setItem(SESSION_KEY, sessionId);
+  }
+
+  const log = document.getElementById("log");
+  const form = document.getElementById("chat-form");
+  const input = document.getElementById("chat-input");
+
+  function appendMessage(role, text) {
+    const div = document.createElement("div");
+    div.className = "msg " + role;
+    div.textContent = text;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+    return div;
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const message = input.value.trim();
+    if (!message) return;
+    input.value = "";
+    appendMessage("user", message);
+
+    const botDiv = appendMessage("bot", "...");
+
+    const res = await fetch(`${API_BASE}/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, message }),
+    });
+
+    if (!res.ok || !res.body) {
+      botDiv.textContent = "서버에 연결할 수 없습니다.";
+      return;
+    }
+
+    // 이 프록시는 SSE 이벤트를 "token"마다 누적된 전체 텍스트로 보내므로
+    // append가 아니라 매번 replace 해야 한다 (web_api.py 주석 참고).
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+
+      const events = buffer.split("\n\n");
+      buffer = events.pop(); // 마지막 조각은 아직 미완성일 수 있음
+
+      for (const raw of events) {
+        const lines = raw.split("\n");
+        let eventName = "message";
+        let data = "";
+        for (const line of lines) {
+          if (line.startsWith("event:")) eventName = line.slice(6).trim();
+          if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+        if (!data) continue;
+        const payload = JSON.parse(data);
+
+        if (eventName === "token") {
+          botDiv.textContent = payload.text;
+        } else if (eventName === "error") {
+          botDiv.textContent = "오류: " + payload.message;
+        }
+        // "done" 이벤트는 별도 처리 없음 (스트림 종료 신호)
+      }
+    }
+  });
+</script>
+</body>
+</html>
