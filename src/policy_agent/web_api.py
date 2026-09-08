@@ -103,6 +103,33 @@ async def health():
     return {"status": "ok", "langgraph_api_url": LANGGRAPH_API_URL}
 
 
+@app.get("/history")
+async def history(session_id: str):
+    """새로고침 후 화면을 채우기 위한 이전 대화 조회.
+
+    새로고침해도 서버(langgraph dev)의 체크포인터에는 대화가 남아있지만,
+    데모 페이지는 이걸 화면에 다시 그려주지 않으면 매번 빈 화면으로 보인다.
+    thread가 아직 없는 새 세션이면 빈 목록을 돌려준다.
+    """
+    thread_id = _thread_id_for(session_id)
+    try:
+        state = await client.threads.get_state(thread_id)
+    except Exception:
+        return {"messages": [], "thread_id": thread_id}
+
+    messages = state.get("values", {}).get("messages", [])
+    result = []
+    for msg in messages:
+        msg_type = msg.get("type")
+        role = "user" if msg_type == "human" else "bot" if msg_type == "ai" else None
+        if role is None:
+            continue
+        text = _extract_text(msg.get("content"))
+        if text:
+            result.append({"role": role, "text": text})
+    return {"messages": result, "thread_id": thread_id}
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     """스트리밍이 필요 없는 단순 요청-응답 방식."""

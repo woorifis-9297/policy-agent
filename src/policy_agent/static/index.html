@@ -64,6 +64,20 @@
     return div;
   }
 
+  // 새로고침해도 서버에 남아있는 이전 대화를 화면에 다시 채운다.
+  (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/history?session_id=${encodeURIComponent(sessionId)}`);
+      if (!res.ok) return;
+      const { messages } = await res.json();
+      for (const m of messages) {
+        appendMessage(m.role === "user" ? "user" : "bot", m.text);
+      }
+    } catch (err) {
+      console.error("history load failed:", err);
+    }
+  })();
+
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const message = input.value.trim();
