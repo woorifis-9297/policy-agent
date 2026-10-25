@@ -14,6 +14,7 @@ dependencies = [
     "langchain>=1.0.2",
     "langchain-anthropic>=1.0.0",
     "langchain-google-genai>=4.3.4",
+    "langchain-mcp-adapters>=0.3.2",
     "langchain-openai>=1.0.1",
     "langchain-tavily>=0.2.12",
     "langfuse>=3.8.1",

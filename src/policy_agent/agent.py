@@ -7,6 +7,7 @@ Policy Agent
 사내 포탈 도구를 갖춘 ReAct 스타일 에이전트를 생성합니다.
 """
 
+import logging
 import os
 from typing import Optional
 
@@ -17,9 +18,12 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from policy_agent.tools import PORTAL_TOOLS
 from policy_agent.prompts import SYSTEM_PROMPT
+from policy_agent.mcp_tools import RagMcp, SourcesMiddleware, build_rag_prompt, load_rag_mcp
 
 # .env 파일에서 환경 변수 로드
 load_dotenv(override=True)
+
+logger = logging.getLogger("policy_agent.agent")
 
 
 def get_llm(model: Optional[str] = None):
@@ -43,7 +47,8 @@ def get_llm(model: Optional[str] = None):
 
 def create_policy_agent(
     model: Optional[str] = None,
-    checkpointer: Optional[InMemorySaver] = None
+    checkpointer: Optional[InMemorySaver] = None,
+    rag: Optional[RagMcp] = None,
 ):
     """
     도구를 갖춘 사내 포탈 업무 도우미 에이전트를 생성합니다.
@@ -51,22 +56,52 @@ def create_policy_agent(
     Args:
         model: LLM용 모델 식별자 문자열 (선택).
         checkpointer: 대화 유지를 위한 메모리 체크포인터 (선택).
+        rag: load_rag_mcp()로 불러온 MCP Tool/도메인 (선택). 없으면 내장 도구만 사용.
 
     Returns:
         바로 호출 가능한 컴파일된 LangGraph 에이전트.
     """
     llm = get_llm(model)
+    tools = list(PORTAL_TOOLS)
+    system_prompt = SYSTEM_PROMPT
+    middleware = []
+    if rag:
+        tools += rag.tools
+        system_prompt += build_rag_prompt(rag.domains)
+        middleware.append(SourcesMiddleware())
 
     agent = create_agent(
         model=llm,
-        tools=PORTAL_TOOLS,
-        system_prompt=SYSTEM_PROMPT,
+        tools=tools,
+        system_prompt=system_prompt,
+        middleware=middleware,
         checkpointer=checkpointer
     )
 
     return agent
 
 
-# LangGraph 서버용 기본 그래프 인스턴스 생성
-# langgraph.json에서 entry point로 참조됩니다
-graph = create_policy_agent()
+_graph_cache = None
+
+
+async def graph():
+    """LangGraph 서버용 그래프 팩토리 (langgraph.json의 entry point).
+
+    MCP Tool 로드가 async라서 모듈 import 시점이 아니라 여기서 그래프를 만든다.
+    langgraph 서버는 실행(run)마다 이 함수를 호출하므로, MCP 연결에 성공한
+    그래프는 캐시해 재사용한다. MCP 서버가 내려가 있으면 내장 도구만으로
+    응답하고, 다음 실행에서 다시 연결을 시도한다.
+    """
+    global _graph_cache
+    if _graph_cache is not None:
+        return _graph_cache
+
+    try:
+        rag = await load_rag_mcp()
+    except Exception:
+        logger.exception("MCP 서버 연결 실패 - 이번 실행은 내장 도구만 사용합니다")
+        return create_policy_agent()
+
+    agent = create_policy_agent(rag=rag)
+    _graph_cache = agent
+    return agent

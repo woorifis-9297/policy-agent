@@ -44,6 +44,8 @@ from langgraph_sdk import get_client
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from policy_agent.mcp_tools import SOURCES_MARKER
+
 load_dotenv(override=True)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
@@ -96,6 +98,15 @@ def _extract_text(content) -> str:
     if isinstance(content, list):
         return "".join(part.get("text", "") for part in content if isinstance(part, dict))
     return str(content)
+
+
+async def _final_answer(thread_id: str) -> str:
+    """run이 끝난 뒤 thread에 저장된 마지막 AI 답변 (출처 줄이 붙은 최종본)."""
+    state = await client.threads.get_state(thread_id)
+    messages = state.get("values", {}).get("messages", [])
+    if messages and messages[-1].get("type") == "ai":
+        return _extract_text(messages[-1].get("content"))
+    return ""
 
 
 @app.get("/health")
@@ -163,11 +174,16 @@ async def chat_stream(req: ChatRequest):
                                    프론트는 append가 아니라 replace로 렌더링해야 한다.
         done:  {"thread_id": "..."} - 정상 종료
         error: {"message": "..."} - 에러 발생
+
+    출처 줄은 그래프의 SourcesMiddleware가 LLM 생성이 끝난 뒤에 붙이므로
+    토큰 스트림에는 나오지 않는다. 그래서 스트리밍 중에는 LLM이 쓴
+    "사용문서:" 줄을 숨기고, 끝난 뒤 저장된 최종 답변을 token으로 한 번 더 보낸다.
     """
     thread_id = _thread_id_for(req.session_id)
 
     async def event_generator() -> AsyncIterator[dict]:
         try:
+            last_text = ""
             async for part in client.runs.stream(
                 thread_id=thread_id,
                 assistant_id=ASSISTANT_ID,
@@ -181,9 +197,14 @@ async def chat_stream(req: ChatRequest):
                 message = data[0] if isinstance(data, list) and data else None
                 if not isinstance(message, dict) or message.get("type") != "ai":
                     continue
-                text = _extract_text(message.get("content"))
-                if text:
+                text = _extract_text(message.get("content")).split(SOURCES_MARKER)[0].rstrip()
+                if text and text != last_text:
+                    last_text = text
                     yield {"event": "token", "data": json.dumps({"text": text})}
+
+            final = await _final_answer(thread_id)
+            if final and final != last_text:
+                yield {"event": "token", "data": json.dumps({"text": final})}
             yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
         except Exception:
             logger.exception("스트리밍 중 오류 [thread=%s]", thread_id)
